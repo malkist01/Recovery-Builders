@@ -59,7 +59,7 @@ jobs:
     if: github.event.repository.owner.id == github.event.sender.id
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      permissions:
+    permissions:
       contents: write
     steps:
     - name: Checkout

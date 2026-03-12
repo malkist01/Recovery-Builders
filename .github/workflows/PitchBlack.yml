@@ -1,0 +1,153 @@
+name: PitchBlack - Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      MANIFEST_BRANCH:
+        description: 'PitchBlack Branch (e.g., android-12.1, android-11)'
+        required: true
+        default: 'android-12.1'
+        type: choice
+        options:
+        - android-12.1
+        - android-11
+        - android-10.0
+        - android-9.0
+      DEVICE_TREE:
+        description: 'Custom Recovery Tree'
+        required: true
+        default: 'https://github.com/R0Xofficial/android_device_samsung_r8q-pbrp'
+      DEVICE_TREE_BRANCH:
+        description: 'Custom Recovery Tree Branch'
+        required: true
+        default: 'pbrp_12.1'
+      DEVICE_PATH:
+        description: 'Specify your device path.'
+        required: true
+        default: 'device/samsung/r8q'
+      DEVICE_NAME:
+        description: 'Specify your Device Codename.'
+        required: true
+        default: 'r8q'
+      BUILD_TARGET:
+        description: 'Specify your Build Target'
+        required: true
+        default: 'recovery'
+        type: choice
+        options:
+        - boot
+        - recovery
+        - vendorboot
+      RECOVERY_TAR:
+        description: 'Release recovery.tar For Samsung devices'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    name: Build PBRP by ${{ github.actor }}
+    runs-on: ubuntu-latest
+    if: github.event.repository.owner.id == github.event.sender.id
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Clean-up
+      uses: rokibhasansagar/slimhub_actions@main
+
+    - name: Swap Space
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 24
+      
+    - name: Build Environment
+      run: |
+        sudo apt update
+        sudo apt -y upgrade
+        sudo apt install -y bc build-essential tar zip curl libstdc++6 git wget python3
+        # Instalacja narzędzia repo
+        mkdir -p ~/bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        sudo ln -sf ~/bin/repo /usr/bin/repo
+      
+    - name: Set-up Manifest
+      run: |
+        mkdir -p ${GITHUB_WORKSPACE}/PBRP
+        cd ${GITHUB_WORKSPACE}/PBRP
+        git config --global user.name "PitchBlack Project"
+        git config --global user.email "pbrp@example.com"
+        repo init -u https://github.com/PitchBlackRecoveryProject/manifest_pb.git -b ${{ github.event.inputs.MANIFEST_BRANCH }}
+        repo sync -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune
+
+    - name: Clone Device Tree
+      run: |
+        cd ${GITHUB_WORKSPACE}/PBRP
+        git clone ${{ github.event.inputs.DEVICE_TREE }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
+        cd ${{ github.event.inputs.DEVICE_PATH }}
+        echo "COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+    - name: Building PitchBlack
+      run: |
+        cd ${GITHUB_WORKSPACE}/PBRP
+        source build/envsetup.sh
+        export ALLOW_MISSING_DEPENDENCIES=true
+        # Lunch dla PBRP to zazwyczaj pb_<codename>-eng
+        lunch pb_${{ github.event.inputs.DEVICE_NAME }}-eng || lunch omni_${{ github.event.inputs.DEVICE_NAME }}-eng
+        make clean
+        mka ${{ github.event.inputs.BUILD_TARGET }}image
+
+    - name: Set Build Date
+      run: |
+        echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
+        DEVICE_TREE_URL="${{ github.event.inputs.DEVICE_TREE }}"
+        [[ "${DEVICE_TREE_URL}" == *.git ]] && DEVICE_TREE_URL="${DEVICE_TREE_URL%.git}"
+        echo "DEVICE_TREE_URL=${DEVICE_TREE_URL}" >> $GITHUB_ENV
+
+    - name: Check Results
+      run: |
+        cd ${GITHUB_WORKSPACE}/PBRP/out/target/product/${{ github.event.inputs.DEVICE_NAME }}
+        if [ -f PBRP-*.zip ]; then
+            echo "CHECK_IMG_IS_OK=true" >> $GITHUB_ENV
+            echo "FILE_PATH=${GITHUB_WORKSPACE}/PBRP/out/target/product/${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
+            # Szukanie obrazu img (zależnie od targetu)
+            IMG_NAME="${{ github.event.inputs.BUILD_TARGET }}.img"
+            [ -f "vendor_boot.img" ] && IMG_NAME="vendor_boot.img"
+            echo "IMG_NAME=${IMG_NAME}" >> $GITHUB_ENV
+            echo "MD5_IMG=$(md5sum ${IMG_NAME} | cut -d ' ' -f 1)" >> $GITHUB_ENV
+        else
+            echo "Build failed - no flashable zip found."
+            exit 1
+        fi
+
+    - name: Recovery to tar for Samsung devices
+      if: github.event.inputs.RECOVERY_TAR == 'true'
+      run: |
+        cd ${{ env.FILE_PATH }}
+        # Odin wymaga nazwy recovery.img wewnątrz tar
+        cp ${{ env.IMG_NAME }} recovery.img
+        tar -cvf recovery.tar recovery.img
+
+    - name: Upload to Release
+      if: env.CHECK_IMG_IS_OK == 'true'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ${{ env.FILE_PATH }}/PBRP-*.zip
+          ${{ env.FILE_PATH }}/${{ env.IMG_NAME }}
+          ${{ env.FILE_PATH }}/recovery.tar
+        name: PitchBlack Recovery for ${{ github.event.inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
+        tag_name: ${{ github.run_id }}
+        body: |
+          ### PitchBlack Recovery Project Build
+          - **Status**: Unofficial
+          - **Device**: `${{ github.event.inputs.DEVICE_NAME }}`
+          - **Manifest**: `${{ github.event.inputs.MANIFEST_BRANCH }}`
+          - **Tree**: [Link](${{ env.DEVICE_TREE_URL }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }})
+          - **Commit**: `${{ env.COMMIT_ID }}`
+          - **MD5 (img)**: `${{ env.MD5_IMG }}`

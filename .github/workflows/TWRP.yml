@@ -1,0 +1,222 @@
+name: TWRP - Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      MANIFEST_BRANCH:
+        description: 'TWRP Branch'
+        required: true
+        default: 'twrp-12.1'
+        type: choice
+        options:
+        - twrp-12.1
+        - twrp-11
+        - twrp-10.0
+        - twrp-9.0
+      DEVICE_TREE:
+        description: 'Custom Recovery Tree'
+        required: true
+        default: 'https://github.com/R0Xofficial/android_device_samsung_r8q'
+      DEVICE_TREE_BRANCH:
+        description: 'Custom Recovery Tree Branch'
+        required: true
+        default: 'twrp'
+      DEVICE_PATH:
+        description: 'Specify your device path.'
+        required: true
+        default: 'device/samsung/r8q'
+      DEVICE_NAME:
+        description: 'Specify your Device Codename.'
+        required: true
+        default: 'r8q'
+      BUILD_TARGET:
+        description: 'Specify your Build Target'
+        required: true
+        default: 'recovery'
+        type: choice
+        options:
+        - boot
+        - recovery
+        - vendorboot
+      LDCHECK:
+        description: 'Path of blobs to check'
+        required: true
+        default: 'system/bin/qseecomd'
+      RECOVERY_TAR:
+        description: 'Release recovery.tar For Samsung devices'
+        required: false
+        default: true
+        type: boolean
+      RECOVERY_INSTALLER:
+        description: 'Include recovery installer zip'
+        type: boolean
+        required: true
+        default: false
+
+jobs:
+  build:
+    name: Build TWRP by ${{ github.actor }}
+    runs-on: ubuntu-latest
+    if: github.event.repository.owner.id == github.event.sender.id
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Display Inputs
+      run: |
+        echo "::group::User Environment Variables"
+        echo "Displaying variables/inputs."
+        echo "Include Recovery Installer: ${{ github.event.inputs.RECOVERY_INSTALLER }}"
+        echo "Release recovery.tar For Samsung devices: ${{ github.event.inputs.RECOVERY_TAR }}"
+        echo "::endgroup::"
+
+    - name: Clean-up
+      uses: rokibhasansagar/slimhub_actions@main
+
+    - name: Swap Space
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 24
+  
+    - name: Build Environment
+      run: |
+        sudo apt update
+        sudo apt -y upgrade
+        git clone https://gitlab.com/OrangeFox/misc/scripts
+        cd scripts
+        sudo bash setup/android_build_env.sh
+        sudo curl https://storage.googleapis.com/git-repo-downloads/repo -o /usr/bin/repo
+        sudo chmod a+x /usr/bin/repo
+  
+    - name: Set-up Manifest
+      run: |
+        mkdir -p ${GITHUB_WORKSPACE}/TWRP
+        cd ${GITHUB_WORKSPACE}/TWRP
+        git config --global user.name "R0Xofficial"
+        git config --global user.email "patryk.bieganski1003@gmail.com"
+        repo init -u https://github.com/minimal-twrp-arm64/platform_manifest_twrp_aosp.git -b ${{ github.event.inputs.MANIFEST_BRANCH }} --depth=1
+        repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune
+
+    - name: Clone Device Tree
+      run: |
+        cd ${GITHUB_WORKSPACE}/TWRP
+        git clone ${{ github.event.inputs.DEVICE_TREE }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
+        cd ${{ github.event.inputs.DEVICE_PATH }}
+        echo "COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+    - name: Check Manifest Branch
+      uses: haya14busa/action-cond@v1
+      id: twrp_branch
+      with:
+        cond: ${{ github.event.inputs.MANIFEST_BRANCH == 'twrp-11' || github.event.inputs.MANIFEST_BRANCH == 'twrp-12.1' }}
+        if_true: lunch twrp_${{ github.event.inputs.DEVICE_NAME }}-eng && make clean && mka adbd ${{ github.event.inputs.BUILD_TARGET }}image
+        if_false: lunch omni_${{ github.event.inputs.DEVICE_NAME }}-eng && make clean && mka ${{ github.event.inputs.BUILD_TARGET }}image
+  
+    - name: Building TWRP
+      run: |
+        cd ${GITHUB_WORKSPACE}/TWRP
+        set +e
+        source build/envsetup.sh
+        export ALLOW_MISSING_DEPENDENCIES=true
+        set -e
+        ${{ steps.twrp_branch.outputs.value }}
+
+    - name: Set Build Date
+      run: |
+        echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
+        DEVICE_TREE_URL="${{ github.event.inputs.DEVICE_TREE }}"
+        if [[ "${DEVICE_TREE_URL}" == *.git ]]; then
+          DEVICE_TREE_URL="${DEVICE_TREE_URL%.git}"
+        fi
+        echo "DEVICE_TREE_URL=${DEVICE_TREE_URL}" >> $GITHUB_ENV
+
+    - name: Check if Recovery Exist
+      run: |
+        cd ${GITHUB_WORKSPACE}/TWRP
+        if [ -f out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_TARGET }}.img ]; then
+            echo "CHECK_IMG_IS_OK=true" >> $GITHUB_ENV
+            echo "FILE_PATH=${GITHUB_WORKSPACE}/TWRP/out/target/product/${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
+            echo "MD5_IMG=$(md5sum out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_TARGET }}.img | cut -d ' ' -f 1)" >> $GITHUB_ENV
+        else
+            echo "Recovery out directory is empty."
+            exit 1
+        fi
+
+    - name: Rename the Recovery
+      run: |
+        cd ${{ env.FILE_PATH }}/
+        if [ "${{ github.event.inputs.BUILD_TARGET }}" = "boot" ]; then
+        mv boot.img TWRP-boot.img
+        echo "RECOVERY_TYPE=TWRP-boot" >> $GITHUB_ENV
+        elif [ "${{ github.event.inputs.BUILD_TARGET }}" = "recovery" ]; then
+        mv recovery.img TWRP-recovery.img
+        echo "RECOVERY_TYPE=TWRP-recovery" >> $GITHUB_ENV
+        elif [ "${{ github.event.inputs.BUILD_TARGET }}" = "vendorboot" ]; then
+        mv vendor_boot.img TWRP-vendor_boot.img
+        echo "RECOVERY_TYPE=TWRP-vendor_boot" >> $GITHUB_ENV
+        fi
+      continue-on-error: true
+  
+    - name: Include Recovery Installer
+      run: |
+        if [ ${{ github.event.inputs.RECOVERY_INSTALLER }} = true ]; then
+          cd ${{ env.FILE_PATH }}/
+          wget https://github.com/kinguser981/recovery-installer/releases/download/11256427880/recovery-installer.zip
+          zip -ur recovery-installer.zip ${{ env.RECOVERY_TYPE }}.img
+        fi
+      continue-on-error: true
+    
+    - name: Recovery to tar for Samsung devices
+      run: |
+        if [ ${{ github.event.inputs.RECOVERY_TAR }} = true ]; then
+          cd ${{ env.FILE_PATH }}/
+          cp ${{ env.RECOVERY_TYPE }}.img recovery.img
+          tar -cvf ${{ env.RECOVERY_TYPE }}.tar recovery.img
+        fi
+      continue-on-error: true
+
+    - name: Upload to Release
+      if: env.CHECK_IMG_IS_OK == 'true'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ${{ env.FILE_PATH }}/${{ env.RECOVERY_TYPE }}.img
+          ${{ env.FILE_PATH }}/${{ env.RECOVERY_TYPE }}.tar
+          ${{ env.FILE_PATH }}/recovery-installer.zip
+        name: Unofficial TWRP for ${{ github.event.inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
+        tag_name: ${{ github.run_id }}
+        body: |
+          Build: ${{ github.event.inputs.MANIFEST_BRANCH }}
+          Device: [Device Tree/Branch](${{ github.event.inputs.DEVICE_TREE }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }})
+          Commit: Most recent [commit](${{ github.event.inputs.DEVICE_TREE }}/commit/${{ env.COMMIT_ID }}) during building.
+      
+    - name: Release ramdisk-recovery
+      if: env.CHECK_IMG_IS_OK == 'true'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ${{ env.FILE_PATH }}/obj/PACKAGING/vendor_ramdisk_fragments_intermediates/recovery.*
+          ${{ env.FILE_PATH }}/ramdisk-recovery.*
+        name: Unofficial TWRP for ${{ github.event.inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
+        tag_name: ${{ github.run_id }}
+        body: |
+          Target: ${{ env.RECOVERY_TYPE }}.img
+          Build: ${{ github.event.inputs.MANIFEST_BRANCH }}
+          Device: [Device Tree/Branch](${{ env.DEVICE_TREE_URL }}/tree/${{ inputs.DEVICE_TREE_BRANCH }})
+          Commit: Most recent [commit](${{ env.DEVICE_TREE_URL }}/commit/${{ env.COMMIT_ID }}) during building.
+          MD5 (img): ${{ env.MD5_IMG }}
+      
+    - name: Run LDCheck
+      run: |
+        cd ${GITHUB_WORKSPACE}/TWRP
+        mkdir -p tools
+        cd tools
+        mv -n libneeds ${{ env.FILE_PATH }}/recovery/root/
+        mv -n ldcheck ${{ env.FILE_PATH }}/recovery/root/
+        cd ${{ env.FILE_PATH }}/recovery/root/
+        python3 ldcheck -p system/lib64:vendor/lib64:system/lib:vendor/lib -d ${{ github.event.inputs.LDCHECK }}
+      continue-on-error: true

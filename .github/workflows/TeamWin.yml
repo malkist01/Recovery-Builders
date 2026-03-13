@@ -161,9 +161,10 @@ jobs:
       if: github.event.inputs.RECOVERY_TAR == true || github.event.inputs.RECOVERY_TAR == 'true'
       run: |
         cd ${{ env.FILE_PATH }}
-        cp ${{ env.RECOVERY_TYPE }}.img recovery.img
+        if [ "${{ env.RECOVERY_TYPE }}.img" != "recovery.img" ]; then
+          cp ${{ env.RECOVERY_TYPE }}.img recovery.img
+        fi
         tar -cvf ${{ env.RECOVERY_TYPE }}.tar recovery.img
-        ls -lh ${{ env.RECOVERY_TYPE }}.tar
       continue-on-error: true
 
     - name: Upload to Release

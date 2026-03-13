@@ -135,30 +135,17 @@ jobs:
 
     - name: Check if Recovery Exist
       run: |
-        cd ${GITHUB_WORKSPACE}/PBRP
-        if [ -f out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_TARGET }}.img ]; then
+        cd workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}
+        if [ -f ${{ github.event.inputs.BUILD_TARGET }}.img ]; then
             echo "CHECK_IMG_IS_OK=true" >> $GITHUB_ENV
-            echo "FILE_PATH=${GITHUB_WORKSPACE}/PBRP/out/target/product/${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
-            echo "MD5_IMG=$(md5sum out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_TARGET }}.img | cut -d ' ' -f 1)" >> $GITHUB_ENV
+            echo "FILE_PATH=workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
+            echo "RECOVERY_TYPE=${{ github.event.inputs.BUILD_TARGET }}" >> $GITHUB_ENV
+            echo "MD5_IMG=$(md5sum ${{ github.event.inputs.BUILD_TARGET }}.img | cut -d ' ' -f 1)" >> $GITHUB_ENV
+            echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
         else
-            echo "Recovery out directory is empty."
+            echo "Build failed - recovery image not found."
             exit 1
         fi
-
-    - name: Rename the Recovery
-      run: |
-        cd ${{ env.FILE_PATH }}/
-        if [ "${{ github.event.inputs.BUILD_TARGET }}" = "boot" ]; then
-        mv boot.img PBRP-boot.img
-        echo "RECOVERY_TYPE=PBRP-boot" >> $GITHUB_ENV
-        elif [ "${{ github.event.inputs.BUILD_TARGET }}" = "recovery" ]; then
-        mv recovery.img PBRP-recovery.img
-        echo "RECOVERY_TYPE=PBRP-recovery" >> $GITHUB_ENV
-        elif [ "${{ github.event.inputs.BUILD_TARGET }}" = "vendorboot" ]; then
-        mv vendor_boot.img PBRP-vendor_boot.img
-        echo "RECOVERY_TYPE=PBRP-vendor_boot" >> $GITHUB_ENV
-        fi
-      continue-on-error: true
   
     - name: Include Recovery Installer
       run: |
@@ -170,12 +157,11 @@ jobs:
       continue-on-error: true
     
     - name: Recovery to tar for Samsung devices
+      if: github.event.inputs.RECOVERY_TAR == 'true'
       run: |
-        if [ ${{ github.event.inputs.RECOVERY_TAR }} = true ]; then
-          cd ${{ env.FILE_PATH }}/
-          cp ${{ env.RECOVERY_TYPE }}.img recovery.img
-          tar -cvf ${{ env.RECOVERY_TYPE }}.tar recovery.img
-        fi
+        cd ${{ env.FILE_PATH }}
+        cp ${{ env.RECOVERY_TYPE }}.img recovery.img
+        tar -cvf ${{ env.RECOVERY_TYPE }}.tar recovery.img
       continue-on-error: true
 
     - name: Upload to Release

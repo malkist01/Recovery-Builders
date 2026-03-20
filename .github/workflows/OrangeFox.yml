@@ -41,11 +41,6 @@ on:
         description: 'Path of blobs to check' 
         required: true
         default: 'system/bin/qseecomd'
-      RECOVERY_TAR:
-        description: 'Release recovery.tar For Samsung devices'
-        required: false
-        default: true
-        type: boolean
       RECOVERY_INSTALLER:
         description: 'Include recovery installer zip'
         type: boolean
@@ -58,6 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.repository.owner.id == github.event.sender.id
     env:
+      TZ: Asia/Jakarta
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     permissions:
       contents: write

@@ -117,6 +117,7 @@ jobs:
         set +e
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
+        export OF_MAINTAINER=Teletubies ☕
         set -e
         ${{ steps.fox_branch.outputs.value }}
 

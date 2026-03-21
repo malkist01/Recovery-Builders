@@ -188,11 +188,6 @@ jobs:
           ${{ env.FILE_PATH }}/OrangeFox*.zip
         name: Unofficial OrangeFox for ${{ github.event.inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
         tag_name: ${{ github.run_id }}
-         curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendDocument" \
-                -F "chat_id=$CHAT_ID" \
-                -F "document=@${{ env.FILE_PATH }}/OrangeFox*.zip \
-                -F "caption=$CAPTION" \
-                -F "parse_mode=MarkdownV2"
         body: |
           Build: ${{ github.event.inputs.MANIFEST_BRANCH }}
           Device: [Device Tree/Branch](${{ github.event.inputs.DEVICE_TREE }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }})
